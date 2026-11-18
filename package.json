@@ -1,0 +1,12 @@
+{
+  "name": "blue-sortie-online",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "BLUE SORTIE ONLINE - frontend (Three.js) + network layer",
+  "scripts": {
+    "dev": "npx serve .",
+    "build:core": "python3 tools/build-core.py",
+    "test": "node tools/test-net.mjs"
+  }
+}
