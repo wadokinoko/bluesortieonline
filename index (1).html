@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#06111b">
+<title>BLUE SORTIE ONLINE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;700&family=Share+Tech+Mono&family=Noto+Sans+JP:wght@500;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<link rel="stylesheet" href="css/core.css">
+<link rel="stylesheet" href="css/online.css">
+<!-- 本番サーバー接続時はここで接続先を指定 (未指定の間はブラウザ内モックで動作)
+<script>window.BSO_CONFIG={API_BASE:'https://bso-api.<account>.workers.dev',WS_BASE:'wss://bso-api.<account>.workers.dev'};</script> -->
+</head>
+<body>
+<div id="fatal" hidden role="alert"></div>
+<div id="stage">
+  <canvas id="gl"></canvas>
+  <canvas id="hud"></canvas>
+
+  <!-- ================= ONLINE 画面 ================= -->
+
+  <!-- 1. タイトル -->
+  <section id="scr-title" class="layer scr title" aria-label="タイトル">
+    <div class="title-wrap">
+      <p class="boot" aria-hidden="true">
+        <span style="--i:0">CAPMF TACTICAL NETWORK</span>
+        <span style="--i:1">UPLINK ........ ESTABLISHED</span>
+        <span style="--i:2">PILOT REGISTRY ........ OK</span>
+      </p>
+      <div class="logo-box">
+        <h1 class="logo" aria-label="BLUE SORTIE ONLINE">
+          <span class="l1">Blue</span>
+          <span class="l2">Sortie</span>
+          <span class="badge"><i></i>Online</span>
+        </h1>
+        <span class="sweep" aria-hidden="true"></span>
+      </div>
+      <div class="trail" aria-hidden="true"></div>
+      <p class="tagline">中央アルタジア国際停戦監視軍 オンライン合同演習</p>
+      <button id="pressStart" class="start" type="button">PRESS START</button>
+      <p class="ver" id="verLine"></p>
+    </div>
+  </section>
+
+  <!-- 2. ONLINE メニュー -->
+  <section id="scr-menu" class="layer scr" hidden aria-label="メインメニュー">
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand">BLUE SORTIE <b>ONLINE</b></div>
+        <div class="conn-pill" data-conn></div>
+      </header>
+      <div class="split">
+        <nav class="menu-list" aria-label="メニュー">
+          <button class="mbtn" type="button" data-go="lobby"><b>Online Lobby</b><small>オンラインロビー — フレンドと対戦</small></button>
+          <button class="mbtn" type="button" data-go="missions"><b>Solo Missions</b><small>キャンペーン全8ミッション(ソロ訓練)</small></button>
+          <button class="mbtn" type="button" id="hgOpen"><b>Hangar</b><small>機体強化・特殊兵装</small></button>
+          <button class="mbtn" type="button" data-go="settings"><b>Settings</b><small>コールサイン・塗装・操作設定</small></button>
+          <button class="mbtn ghost" type="button" data-go="title"><b>Title</b><small>タイトルへ戻る</small></button>
+        </nav>
+        <aside class="panel pcard" data-pcard aria-label="プレイヤー情報"></aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. オンラインロビー -->
+  <section id="scr-lobby" class="layer scr" hidden aria-label="オンラインロビー">
+    <div class="shell">
+      <header class="topbar">
+        <button class="back" type="button" data-go="menu">‹ MENU</button>
+        <h2 class="scr-title">Online Lobby</h2>
+        <div class="conn-pill" data-conn></div>
+      </header>
+      <div class="split">
+        <div class="stack">
+          <div class="panel">
+            <p class="tag">Match</p>
+            <button class="mode" type="button" data-go="friend"><span><b>フレンド対戦</b><small>ルームコードを共有して友達と飛ぶ</small></span><em>OPEN</em></button>
+            <button class="mode" type="button" disabled><span><b>クイックマッチ</b><small>マッチメイキング(サーバー実装後)</small></span><em class="soon">SOON</em></button>
+            <button class="mode" type="button" disabled><span><b>ランクマッチ</b><small>レーティング戦(サーバー実装後)</small></span><em class="soon">SOON</em></button>
+            <button class="mode" type="button" data-go="missions"><span><b>ソロ訓練</b><small>キャンペーンミッションを単独で</small></span><em>OPEN</em></button>
+          </div>
+          <div class="panel">
+            <p class="tag">Network</p>
+            <dl class="kv" id="netInfo"></dl>
+            <p class="note" id="netNote"></p>
+          </div>
+        </div>
+        <aside class="panel pcard" data-pcard aria-label="プレイヤー情報"></aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. フレンド対戦: ルーム作成 / 参加 -->
+  <section id="scr-friend" class="layer scr" hidden aria-label="フレンド対戦">
+    <div class="shell">
+      <header class="topbar">
+        <button class="back" type="button" data-go="lobby">‹ LOBBY</button>
+        <h2 class="scr-title">Friend Match</h2>
+        <div class="conn-pill" data-conn></div>
+      </header>
+      <div class="split even">
+        <div class="panel">
+          <p class="tag">Create Room</p>
+          <h3>ルームを作成</h3>
+          <p class="brief">設定を決めてルームを作り、表示される6文字のコードを友達に伝えます。</p>
+          <div class="fields" id="createFields"></div>
+          <button id="btnCreate" class="btn" type="button">ルーム作成</button>
+        </div>
+        <div class="panel">
+          <p class="tag">Join Room</p>
+          <h3>コードで参加</h3>
+          <p class="brief">友達から受け取った6文字のルームコードを入力します。</p>
+          <label class="field"><span>ROOM CODE</span>
+            <input id="joinCode" class="code-input" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="6" placeholder="ABC234" aria-describedby="joinErr">
+          </label>
+          <p class="err" id="joinErr" role="status"></p>
+          <div class="row">
+            <button id="btnJoin" class="btn" type="button">参加する</button>
+            <button id="btnDemo" class="btn alt" type="button" hidden>デモルーム ALPHA2</button>
+          </div>
+          <p class="note" id="demoNote" hidden>ブラウザ内モックで動作中です。デモルーム(ALPHA2)には仮想フレンドが在室し、入室・準備・出撃までの流れを確認できます。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. ルーム (待機室) -->
+  <section id="scr-room" class="layer scr" hidden aria-label="ルーム">
+    <div class="shell">
+      <header class="topbar">
+        <button class="back" type="button" id="btnLeave">‹ LEAVE</button>
+        <h2 class="scr-title">Room</h2>
+        <div class="conn-pill" data-conn></div>
+      </header>
+      <div class="panel codebar">
+        <div>
+          <p class="tag">Room Code</p>
+          <div class="code" id="roomCode" aria-live="polite">------</div>
+        </div>
+        <div class="row">
+          <button id="btnCopyCode" class="btn alt sm" type="button">コードをコピー</button>
+          <button id="btnShare" class="btn alt sm" type="button">招待リンク</button>
+        </div>
+      </div>
+      <div class="split room-split">
+        <div class="panel">
+          <p class="tag">Pilots <span id="roomCount"></span></p>
+          <ul class="slots" id="slots"></ul>
+        </div>
+        <div class="stack">
+          <div class="panel">
+            <p class="tag">Match Settings <span id="hostNote"></span></p>
+            <div class="fields" id="roomFields"></div>
+          </div>
+          <aside class="panel pcard" data-pcard aria-label="プレイヤー情報"></aside>
+        </div>
+      </div>
+      <div class="panel actions">
+        <p class="hint" id="roomHint" role="status"></p>
+        <div class="row">
+          <button id="btnReady" class="btn" type="button" hidden>準備完了</button>
+          <button id="btnStart" class="btn" type="button" hidden>出撃開始</button>
+          <button id="btnRejoin" class="btn" type="button" hidden>対戦に戻る</button>
+        </div>
+      </div>
+      <div id="countdown" class="countdown" hidden aria-live="assertive"><div><small>MISSION START</small><b id="countNum">3</b></div></div>
+    </div>
+  </section>
+
+  <!-- 設定 -->
+  <section id="scr-settings" class="layer scr" hidden aria-label="設定">
+    <div class="shell narrow">
+      <header class="topbar">
+        <button class="back" type="button" data-go="menu">‹ MENU</button>
+        <h2 class="scr-title">Settings</h2>
+        <span></span>
+      </header>
+      <div class="panel">
+        <p class="tag">Pilot</p>
+        <label class="field"><span>コールサイン (2〜12文字)</span>
+          <input id="setName" type="text" maxlength="12" autocomplete="off" spellcheck="false">
+        </label>
+        <p class="err" id="nameErr" role="status"></p>
+        <div class="field"><span>機体塗装</span><div id="liveryGrid" class="livery-grid" role="radiogroup" aria-label="機体塗装"></div></div>
+      </div>
+      <div class="panel">
+        <p class="tag">Game</p>
+        <div class="row">
+          <button id="gfx" class="btn alt" type="button">最強グラフィック: OFF</button>
+          <button id="setSound" class="btn alt" type="button">サウンド: ON</button>
+        </div>
+        <label class="field"><span>タッチ操作パッド(スマートフォン)</span>
+          <select id="setTouch"><option value="auto">自動(タッチ端末で表示)</option><option value="on">常に表示</option><option value="off">表示しない</option></select>
+        </label>
+        <p class="note">PCではキーボード(W/S ピッチ・A/D ロール・Q/E ヨー・Space 機関砲・F ミサイル・Z フレア)で操縦します。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ソロミッション選択 (Blue Sortie 4 のキャンペーン全8ミッションをそのまま収録) -->
+  <section id="scr-missions" class="layer scr" hidden aria-label="ソロミッション">
+    <div class="shell narrow">
+      <header class="topbar">
+        <button class="back" type="button" data-go="menu">‹ MENU</button>
+        <h2 class="scr-title">Solo Missions</h2>
+        <span></span>
+      </header>
+      <div class="panel">
+        <p class="tag">Campaign — THE PHANTOM SKY</p>
+        <p class="brief">「最高の夜明け」から一年。無人戦闘機群「ファントム」が空に現れた。撃ち合うたびに学習する敵に挑む全8ミッション。オンライン対戦の前の訓練にも使えます。</p>
+        <ul class="keys">
+          <li><kbd>W</kbd><kbd>S</kbd> 機首の上げ下げ(<kbd>S</kbd>で上げ)</li>
+          <li><kbd>A</kbd><kbd>D</kbd> ロール</li>
+          <li><kbd>Q</kbd><kbd>E</kbd> ヨー</li>
+          <li><kbd>Shift</kbd><kbd>C</kbd> 加速 / 減速</li>
+          <li><kbd>Space</kbd> 機関砲</li>
+          <li><kbd>F</kbd> / <kbd>Enter</kbd> ミサイル</li>
+          <li><kbd>Z</kbd> フレア <kbd>B</kbd> 爆弾 <kbd>X</kbd> 特殊兵装</li>
+          <li><kbd>P</kbd> ポーズ <kbd>M</kbd> 音 <kbd>G</kbd> 最強グラフィック</li>
+        </ul>
+        <div class="row"><button id="go" class="btn" type="button">キャンペーン開始</button></div>
+        <div id="dsel" class="msel"></div>
+        <div id="msel" class="msel"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ゲームコア互換レイヤー (Blue Sortie 4 と同じID) ================= -->
+  <div id="hangar" class="layer" hidden>
+    <div class="card">
+      <p class="tag">Hangar</p>
+      <h2>ハンガー</h2>
+      <p class="brief" id="hgCr"></p>
+      <div id="hgList" class="hg"></div>
+      <div class="row"><button id="hgBack" class="btn alt" type="button">戻る</button></div>
+    </div>
+  </div>
+
+  <div id="brief" class="layer" hidden>
+    <div class="card">
+      <p class="tag" id="bTag">Mission 01</p>
+      <h2 id="bTitle"></h2>
+      <p class="sub" id="bSub"></p>
+      <p class="brief" id="bText"></p>
+      <p class="brief" id="bObj" style="color:var(--amber)"></p>
+      <div class="row"><button id="launch" class="btn" type="button">出撃</button><button id="bBack" class="btn alt" type="button">戻る</button></div>
+    </div>
+  </div>
+
+  <div id="pause" class="layer" hidden>
+    <div class="card">
+      <p class="tag">Paused</p>
+      <h2>メニュー</h2>
+      <p class="brief" id="pauseNote">再開するとゲームが続きます。</p>
+      <div class="row">
+        <button id="resume" class="btn" type="button">再開</button>
+        <button id="leaveMatch" class="btn alt" type="button">退出</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="end" class="layer" hidden>
+    <div class="card">
+      <p class="tag" id="endTag">Mission Result</p>
+      <h2 id="endTitle">ミッション完了</h2>
+      <p class="brief" id="endText"></p>
+      <div class="stats">
+        <div class="stat"><b id="rKills">0</b><i>撃墜数</i></div>
+        <div class="stat"><b id="rTime">0:00</b><i>作戦時間</i></div>
+        <div class="stat"><b id="rScore">0</b><i>スコア</i></div>
+        <div class="stat"><b id="rBest">0</b><i>ベスト</i></div>
+      </div>
+      <div class="row"><button id="next" class="btn" type="button" hidden>次のミッションへ</button><button id="again" class="btn alt" type="button">もう一度出撃</button><button id="tomenu" class="btn alt" type="button">戻る</button></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</div>
+
+<script>
+/* 致命エラー表示 (Three.js/WebGL が使えない場合。ゲームコアから呼ばれる) */
+window.BSO_fatal=function(msg){var e=document.getElementById('fatal');e.textContent=msg;e.hidden=false;};
+</script>
+<script src="js/game/game-core.js"></script>
+<script type="module" src="js/main.js"></script>
+<noscript><p style="color:#fff;padding:24px">JavaScript を有効にしてください。</p></noscript>
+</body>
+</html>

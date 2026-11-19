@@ -1,0 +1,16 @@
+{
+  "name": "bso-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "BLUE SORTIE ONLINE - Cloudflare Worker + Durable Object (wrangler)",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "test": "node --test --test-timeout=20000 test/*.test.mjs && node test/e2e-net.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
