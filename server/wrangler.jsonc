@@ -1,0 +1,21 @@
+{
+  // BLUE SORTIE ONLINE - Cloudflare Worker + Durable Object
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "bso-api",
+  "main": "src/index.js",
+  "compatibility_date": "2025-09-01",
+
+  // 1ルーム = 1 Durable Object。無料プランでも使える SQLite バックエンドのクラスとして宣言する。
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "BsoRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BsoRoom"] }],
+
+  "vars": {
+    // ブラウザからのアクセスを許可するフロントエンドのオリジン(カンマ区切り)。
+    // デプロイ前に自分の Vercel ドメインへ書き換えること。空にすると全許可(開発専用)。
+    "ALLOWED_ORIGINS": "http://localhost:3000,https://YOUR-APP.vercel.app"
+  },
+
+  "observability": { "enabled": true }
+}

@@ -11,8 +11,13 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <link rel="stylesheet" href="css/core.css">
 <link rel="stylesheet" href="css/online.css">
-<!-- 本番サーバー接続時はここで接続先を指定 (未指定の間はブラウザ内モックで動作)
-<script>window.BSO_CONFIG={API_BASE:'https://bso-api.<account>.workers.dev',WS_BASE:'wss://bso-api.<account>.workers.dev'};</script> -->
+<!-- Cloudflare 本番サーバー接続 -->
+<script>
+window.BSO_CONFIG = {
+  API_BASE: 'https://bso-api.kerotowado.workers.dev',
+  WS_BASE: 'wss://bso-api.kerotowado.workers.dev'
+};
+</script>
 </head>
 <body>
 <div id="fatal" hidden role="alert"></div>
