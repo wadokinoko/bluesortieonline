@@ -58,9 +58,9 @@ ok(A.store.get().match && B.store.get().match, 'match state set in both stores')
 
 console.log('--- 状態同期・チャット ---');
 let sawB = null, sawA = null; A.net.on('snap', (m) => { if (m.players.pBBBBBBBB2) sawB = m.players.pBBBBBBBB2; }); B.net.on('snap', (m) => { if (m.players.pAAAAAAAA1) sawA = m.players.pAAAAAAAA1; });
-const si = setInterval(() => { A.net.sendState([10, 2300, 20, 0, 0, 0, 1, 210, 100, 0]); B.net.sendState([-5, 2310, 7, 0, 0, 0, 1, 190, 80, 1]); }, 66);
+const si = setInterval(() => { A.net.sendState([10, 2300, 20, 0, 0, 0, 1, 210, 100, 0]); B.net.sendState([-5, 2310, 7, 0, 0, 0, 1, 190, 80, 4]); }, 66);
 ok(await until(() => sawA && sawB), 'both receive the other player state');
-ok(sawA[0] === 10 && sawB[9] === 1, 'state values relayed unchanged');
+ok(sawA[0] === 10 && sawB[9] === 4, 'state values relayed unchanged (flags: barrier bit)');
 B.net.sendState([NaN, 0, 0, 0, 0, 0, 1, 1, 1, 0]); B.net.sendState('garbage'); await wait(150);
 ok(room(B) && B.store.get().conn.status === 'online', 'invalid states do not break the connection');
 let chat = null; B.net.on('chat', (m) => { chat = m; }); A.net.chat('こんにちは');
@@ -85,10 +85,30 @@ B.net.sock.send('{{ not json'); B.net.sock.send(JSON.stringify({ t: 'room.kick',
 ok(B.store.get().conn.status === 'online', 'garbage messages ignored by server');
 clearInterval(si);
 
+console.log('--- 命中判定・ダメージ同期(サーバー権威) ---');
+const si2 = setInterval(() => { A.net.sendState([0, 2300, 0, 0, 0, 0, 1, 200, 100, 0]); B.net.sendState([0, 2300, -600, 0, 0, 0, 1, 200, 100, 0]); }, 66); // A の正面600mに B(B は hp=100 と申告し続ける)
+const hitsA = [], hitsB = [], killsA = [], killsB = []; let snapHp = null, snapDead = false;
+A.net.on('hit', (m) => hitsA.push(m)); B.net.on('hit', (m) => hitsB.push(m)); A.net.on('kill', (m) => killsA.push(m)); B.net.on('kill', (m) => killsB.push(m));
+A.net.on('snap', (m) => { const b = m.players.pBBBBBBBB2; if (b) { snapHp = b[8]; snapDead = (b[9] & 1) === 1; } });
+await wait(250); A.net.fire('g');
+ok(await until(() => hitsA.length && hitsB.length), 'hit: shooter and victim both receive the server-decided hit');
+ok(hitsB[0].to === 'pBBBBBBBB2' && hitsB[0].by === 'pAAAAAAAA1' && hitsB[0].k === 'g' && hitsB[0].dmg === 3 && hitsB[0].hp === 97, 'hit payload: gun 3 dmg, hp 97 decided by server');
+ok(await until(() => snapHp === 97), 'snap carries the server HP (97) although B keeps reporting hp=100');
+let n = 0; const burst = setInterval(() => { if (n++ < 50) A.net.fire('g'); }, 70); // 14Hz の連射
+ok(await until(() => killsA.length && killsB.length, 9000), 'kill: delivered to both clients after enough hits');
+clearInterval(burst);
+ok(killsB[0].to === 'pBBBBBBBB2' && killsB[0].by === 'pAAAAAAAA1', 'kill payload: victim and killer');
+ok(await until(() => snapDead && snapHp === 0), 'snap marks the victim dead with hp 0 (server-decided)');
+const nh = hitsB.length; A.net.fire('g'); A.net.fire('m', 'pBBBBBBBB2'); await wait(1200); ok(hitsB.length === nh && killsB.length === 1, 'dead player takes no further damage; no duplicate kill');
+ok(A.store.get().conn.status === 'online' && B.store.get().conn.status === 'online', 'connections healthy after combat');
+clearInterval(si2);
+
 console.log('--- 対戦終了・キック ---');
+let endResults = null; A.net.on('match.end', (m) => { endResults = m.results; });
 A.net.leaveMatch(); B.net.leaveMatch();
 ok(await until(() => room(A).status === 'lobby' && room(B).status === 'lobby', 4000), 'all left match -> lobby');
 ok(room(A).players.every((p) => !p.ready), 'ready flags reset');
+ok(endResults && endResults[0].id === 'pAAAAAAAA1' && endResults[0].kills === 1 && endResults.find((r) => r.id === 'pBBBBBBBB2').deaths === 1, 'match.end carries the server-tracked scoreboard (kills/deaths)');
 A.net.kick('pBBBBBBBB2');
 ok(await until(() => B.store.get().room === null), 'kicked player removed from room');
 ok(room(A).players.length === 1, 'roster updated for host');

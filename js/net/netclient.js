@@ -11,6 +11,11 @@ import { NetError } from './errors.js';
 
 const BACKOFF = [500, 1000, 2000, 4000, 8000];
 
+function makeTok() {
+  try { const b = new Uint8Array(16); crypto.getRandomValues(b); return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join(''); } catch (e) { /* 古い環境 */ }
+  return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
 export class NetClient {
   constructor({ backend, store }) {
     this.backend = backend;
@@ -26,6 +31,7 @@ export class NetClient {
     this.rtt = null;
     this.retry = 0;
     this.serverOffset = 0; // serverTime - localTime (ms)
+    this.tok = makeTok(); // 再接続の本人確認用の秘密(ページを開いている間だけ有効・保存しない)。pid は他プレイヤーにも見えるため
   }
 
   /* ---- イベント: サーバーからのメッセージ種別 + 'lost' (切断確定) ---- */
@@ -75,6 +81,8 @@ export class NetClient {
   joinMatch() { this._send({ t: C2S.MATCH_JOIN }); }
   leaveMatch() { this._send({ t: C2S.MATCH_LEAVE }); this.store.dispatch({ type: 'match/end' }); }
   sendState(arr) { this._send({ t: C2S.STATE, s: arr }); }
+  /** 発射の通知。k='g'(機銃) / 'm'(ミサイル)、tgt=ロック中の相手の pid。命中判定はサーバーが行う */
+  fire(k, tgt) { const m = { t: C2S.FIRE, k }; if (tgt) m.tgt = tgt; return this._send(m); }
   chat(text) { this._send({ t: C2S.CHAT, text: String(text).slice(0, 120) }); }
 
   /* ---- 内部: 接続 ---- */
@@ -95,7 +103,7 @@ export class NetClient {
     this.code = code;
     const p = this.profile;
     const t0 = Date.now();
-    const w = await this._request({ t: C2S.HELLO, v: PROTO, pid: p.id, name: sanitizeName(p.name), livery: p.livery });
+    const w = await this._request({ t: C2S.HELLO, v: PROTO, pid: p.id, tok: this.tok, name: sanitizeName(p.name), livery: p.livery });
     this.serverOffset = (w.serverTime || t0) - (t0 + Date.now()) / 2;
     this.joined = true;
     this.retry = 0;

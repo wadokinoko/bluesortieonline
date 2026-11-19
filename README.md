@@ -14,6 +14,15 @@ npm run dev          # = npx serve .   → http://localhost:3000
 - `?bots=0` で仮想フレンドを無効化。
 - `?room=ABC234` を付けて開くと、PRESS START 後に自動でそのルームへ参加します(招待リンク)。
 
+## オンラインサーバー (Cloudflare Workers + Durable Objects)
+
+`server/` に実装済み。ローカル起動・デプロイ手順・未検証事項は **`docs/DEPLOY.md`**、設計は `docs/ARCHITECTURE.md`。
+
+```bash
+cd server && npm install && npm run dev      # → http://localhost:8787
+# フロント: http://localhost:3000/?api=http://localhost:8787&ws=ws://localhost:8787
+```
+
 ## サーバーを接続するとき
 
 `index.html` のコメントアウトされた `window.BSO_CONFIG = { API_BASE, WS_BASE }` を有効にする
@@ -23,8 +32,15 @@ npm run dev          # = npx serve .   → http://localhost:3000
 ## テスト
 
 ```bash
-npm test             # 通信層(モックサーバー + NetClient)の結合テスト
+npm test             # モック通信 → ルームロジック → Worker/DO → 実クライアント結合 (すべて Node 上)
+npm run test:mock    # 既存のモック通信テストのみ
+npm run test:layout  # ファイル構成・import・wrangler 設定の整合性チェック
 ```
+
+## GitHub への置き方(重要)
+
+GitHub の Web 画面で「ファイルを選択してアップロード」すると**フォルダ構造が失われます**(全ファイルがルート直下に平置きされ、動かなくなる)。
+**フォルダごと**ドラッグするか、`git push` で上げてください。`.gitignore` / `.vercelignore` はドット始まりのため、Web アップロードでは見落としやすいので注意。
 
 ## デプロイ
 

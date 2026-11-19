@@ -1,0 +1,47 @@
+/* 元の Blue Sortie 4 (bluesortie4.html) から抜き出した関数(無改変)。ソロのロックオン/ミサイル挙動が変わっていないことの比較用。 */
+function updateLock(dt){
+  let best=null,ba=1e9;
+  for(const e of enemies.concat(tg)){
+    const to=e.pos.clone().sub(P.pos), d=to.length(), ang=fwd.angleTo(to);
+    if(d<3600&&ang<.42&&ang<ba){ba=ang;best=e;}
+  }
+  if(best!==lock.cand){lock.cand=best;lock.t=0;}
+  else if(best)lock.t=Math.min(1,lock.t+dt/.9); else lock.t=0;
+  lock.locked=!!lock.cand&&lock.t>=1;
+  if(lock.locked&&!lock.was)beep(1100,.12,.08);
+  lock.was=lock.locked;
+}
+function updateMissiles(dt){
+  for(let i=missiles.length-1;i>=0;i--){
+    const m=missiles[i]; m.life-=dt;
+    m.speed=Math.min(560,m.speed+380*dt);
+    if(m.target&&(enemies.indexOf(m.target)>=0||tg.indexOf(m.target)>=0)){
+      const des=m.target.pos.clone().sub(m.pos).normalize();
+      const ang=m.dir.angleTo(des), t=Math.min(1,(2.6*dt)/Math.max(ang,1e-4));
+      m.dir.lerp(des,t).normalize();
+    }
+    m.pos.addScaledVector(m.dir,m.speed*dt);
+    m.m.position.copy(m.pos); m.m.lookAt(m.pos.clone().add(m.dir));
+    m.puff-=dt;
+    if(m.puff<=0){ m.puff=.03;
+      addPart(m.pos.clone().addScaledVector(m.dir,-6),{col:0xdde6ee,add:false,s0:8,s1:34,life:1.3,op:.5});
+      addPart(m.pos.clone().addScaledVector(m.dir,-5),{col:0xffa050,add:true,s0:12,s1:5,life:.12,op:1}); }
+    let hit=false;
+    for(const e of enemies){ if(m.pos.distanceToSquared(e.pos)<34*34){ e.hp-=250; if(e.hp<=0)killEnemy(e); else explode(e.pos.clone(),.7); hit=true; break; } }
+    if(!hit)for(const t of tg){ if(m.pos.distanceToSquared(t.pos)<(t.r+14)*(t.r+14)){ explode(m.pos.clone(),.8); dmgT(t,t.def.sup?260:150); hit=true; break; } }
+    if(hit||m.life<=0||m.pos.y<heightAt(m.pos.x,m.pos.z)){
+      if(!hit)explode(m.pos.clone(),.5);
+      scene.remove(m.m); missiles.splice(i,1);
+    }
+  }
+}
+function fireMissile(){
+  if(!P.msl||P.mslT>0||P.dead)return;
+  P.msl--; P.mslT=.45; P.side*=-1;
+  const off=new V3(P.side*5,-1.2,1).applyQuaternion(P.q).add(P.pos);
+  const m=new THREE.Mesh(missGeo,missMat); scene.add(m);
+  const target=lock.locked?lock.cand:null;
+  missiles.push({m,pos:off.clone(),dir:fwd.clone(),speed:P.speed,target,life:7,puff:0});
+  noise(.6,'bandpass',1200,.25,300);
+  if(!target)S.msgT=Math.min(S.msgT,0);
+}

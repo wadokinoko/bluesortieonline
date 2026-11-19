@@ -9,6 +9,7 @@
  * close コードは WebSocket 仕様上 1000 / 3000〜4999 のみ使う。
  *   4000 拒否 / 4001 キック / 4002 置換 / 4003 ルーム終了 / 4008 hello遅延 / 4009 巨大 / 4010 違反多発 / 4011 非テキスト */
 import { PROTO, C2S, S2C, ERR, ERR_TEXT } from '../../shared/protocol.js';
+import { Combat } from './combat.js';
 import { defaultSettings, sanitizeSettings, sanitizeName, sanitizeLivery, unpackState } from '../../shared/rules.js';
 
 export const LIMITS = Object.freeze({
@@ -80,6 +81,7 @@ export class RoomCore {
     this.states = {}; this.inMatch = new Set(); this.dirty = false;
     this.tick = 0; this.matchId = null; this.seed = 0; this.t0 = 0;
     this.snapTimer = null; this.startTimer = null; this.endTimer = null;
+    this.combat = new Combat(); this.stateAt = {}; this.lastSim = 0; // 命中判定(サーバー権威)
   }
 
   get connCount() { return this.all.size; }
@@ -90,7 +92,7 @@ export class RoomCore {
   accept(sock) {
     const now = this.clock.now();
     const conn = { sock, pid: null, joined: false, dead: false, strikes: 0, winT: now,
-      bGen: new Bucket(40, 20, now), bState: new Bucket(30, 25, now), bChat: new Bucket(3, 0.5, now), helloTimer: null };
+      bGen: new Bucket(40, 20, now), bState: new Bucket(30, 25, now), bChat: new Bucket(3, 0.5, now), bFire: new Bucket(30, 25, now), helloTimer: null };
     this.all.add(conn);
     conn.helloTimer = this.clock.setTimeout(() => { if (!conn.joined) this._kill(conn, 4008, 'hello timeout'); }, this.L.HELLO_TIMEOUT_MS);
     return conn;
@@ -124,7 +126,7 @@ export class RoomCore {
     let m; try { m = JSON.parse(raw); } catch (e) { return this._strike(conn); }
     if (!m || typeof m !== 'object' || Array.isArray(m) || typeof m.t !== 'string') return this._strike(conn);
     const now = this.clock.now();
-    const bucket = m.t === C2S.STATE ? conn.bState : m.t === C2S.CHAT ? conn.bChat : conn.bGen;
+    const bucket = m.t === C2S.STATE ? conn.bState : m.t === C2S.CHAT ? conn.bChat : m.t === C2S.FIRE ? conn.bFire : conn.bGen;
     if (!bucket.take(now)) { if (m.t !== C2S.CHAT) this._strike(conn); return; }
 
     if (m.t === C2S.PING) {
@@ -170,7 +172,15 @@ export class RoomCore {
         if (this.status !== 'inmatch' || !this.inMatch.has(me.id)) break;
         const s = validateState(m.s);
         if (!s) return this._strike(conn);
-        this.states[me.id] = s; this.dirty = true; break;
+        this.states[me.id] = s; this.stateAt[me.id] = now; this.dirty = true;
+        if (s[9] & 1) this.combat.markDead(me.id); // 自機の墜落(地面衝突など)の申告
+        break;
+      }
+      case C2S.FIRE: {
+        if (this.status !== 'inmatch' || !this.inMatch.has(me.id)) break;
+        if ((m.k !== 'g' && m.k !== 'm') || (m.tgt !== undefined && (typeof m.tgt !== 'string' || m.tgt.length > 40))) return this._strike(conn);
+        this.combat.fire(me.id, m.k, m.tgt, this.states[me.id], now, now - (this.stateAt[me.id] || 0));
+        break;
       }
       case C2S.CHAT: {
         if (typeof m.text !== 'string') return this._strike(conn);
@@ -232,7 +242,7 @@ export class RoomCore {
     this.players = this.players.filter((x) => x.id !== pid);
     const c = this.conns.get(pid); this.conns.delete(pid);
     if (c) this._kill(c, 1000, 'removed');
-    this.inMatch.delete(pid); delete this.states[pid];
+    this.inMatch.delete(pid); delete this.states[pid]; delete this.stateAt[pid]; this.combat.remove(pid);
     if (!this.players.length) return this._destroy();
     if (this.hostId === pid) {
       const next = this.players.find((x) => x.connected) || this.players[0];
@@ -274,7 +284,8 @@ export class RoomCore {
     this.status = 'inmatch'; this.startAt = null; this.t0 = this.clock.now(); this.tick = 0; this.states = {}; this.dirty = false;
     this.matchId = 'm' + this.t0.toString(36) + Math.floor(this.clock.random() * 1296).toString(36);
     this.seed = Math.floor(this.clock.random() * 2 ** 31);
-    this.inMatch = new Set(live.map((p) => p.id));
+    this.inMatch = new Set(live.map((p) => p.id)); this.stateAt = {}; this.lastSim = this.t0;
+    this.combat.reset([...this.inMatch]);
     this._bc();
     const msg = this._startMsg();
     this.inMatch.forEach((id) => { const c = this.conns.get(id); if (c) this._send(c, msg); });
@@ -282,13 +293,17 @@ export class RoomCore {
     this.endTimer = this.clock.setTimeout(() => this._endMatch(), this.settings.timeLimit * 1000 + this.L.MATCH_END_SLACK_MS);
   }
   _snapTick() {
-    if (this.status !== 'inmatch' || !this.dirty) return;
+    if (this.status !== 'inmatch') return;
+    const ts = this.clock.now(), dt = Math.min(0.25, Math.max(0, (ts - this.lastSim) / 1000)); this.lastSim = ts;
+    for (const e of this.combat.step(dt, this.states)) this._eachMatch((c) => this._send(c, e)); // hit / kill を全員へ
+    if (!this.dirty) return;
     this.dirty = false; this.tick++;
-    const ts = this.clock.now();
+    const view = {}; // サーバーが確定した HP と撃墜状態を上書きして配信する(クライアント申告の hp は信用しない)
+    for (const k in this.states) { const a = this.states[k].slice(); a[8] = Math.round(this.combat.hp(k)); if (this.combat.isDead(k)) a[9] |= 1; view[k] = a; }
     this.inMatch.forEach((id) => {
       const c = this.conns.get(id); if (!c) return;
       const players = {}; let n = 0;
-      for (const k in this.states) if (k !== id) { players[k] = this.states[k]; n++; }
+      for (const k in view) if (k !== id) { players[k] = view[k]; n++; }
       if (n) this._send(c, { t: S2C.SNAP, tick: this.tick, ts, players });
     });
   }
@@ -296,10 +311,11 @@ export class RoomCore {
   _endMatch() {
     if (this.status !== 'inmatch') return;
     this._clearTimers();
-    this.status = 'lobby'; this.startAt = null; this.states = {}; this.inMatch.clear();
+    const results = this.combat.results((id) => { const p = this._p(id); return p ? p.name : ''; });
+    this.status = 'lobby'; this.startAt = null; this.states = {}; this.stateAt = {}; this.inMatch.clear(); this.combat.reset([]);
     this.players.forEach((p) => { p.ready = false; });
     this._bc();
-    this._each((c) => this._send(c, { t: S2C.MATCH_END, results: [] }));
+    this._each((c) => this._send(c, { t: S2C.MATCH_END, results: results }));
   }
   _clearTimers() {
     if (this.snapTimer) this.clock.clearInterval(this.snapTimer);
@@ -316,6 +332,7 @@ export class RoomCore {
   }
   _bc() { this.rev++; const m = { t: S2C.ROOM, room: this._snapshot() }; this._each((c) => this._send(c, m)); }
   _each(fn) { this.conns.forEach((c) => fn(c)); }
+  _eachMatch(fn) { this.inMatch.forEach((id) => { const c = this.conns.get(id); if (c) fn(c); }); }
   _send(conn, obj) { if (conn.dead) return; try { conn.sock.send(JSON.stringify(obj)); } catch (e) { /* 壊れたソケットは close イベントで掃除される */ } }
   _err(conn, m, code, msg) { this._send(conn, { t: S2C.ERROR, re: m && typeof m.id === 'number' ? m.id : undefined, code, msg: msg || ERR_TEXT[code] || code }); }
 }

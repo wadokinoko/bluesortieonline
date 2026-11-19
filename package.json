@@ -7,6 +7,11 @@
   "scripts": {
     "dev": "npx serve .",
     "build:core": "python3 tools/build-core.py",
-    "test": "node tools/test-net.mjs"
+    "test": "npm run test:layout && node tools/test-net.mjs && npm run test:client && npm run test:server",
+    "test:mock": "node tools/test-net.mjs",
+    "test:server": "node --test --test-timeout=20000 server/test/*.test.mjs && node server/test/e2e-net.mjs",
+    "test:layout": "node tools/check-layout.mjs",
+    "deploy:server": "cd server && npm install && npx wrangler deploy",
+    "test:client": "node tools/test-client.mjs"
   }
 }

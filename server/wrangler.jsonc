@@ -14,7 +14,7 @@
   "vars": {
     // ブラウザからのアクセスを許可するフロントエンドのオリジン(カンマ区切り)。
     // デプロイ前に自分の Vercel ドメインへ書き換えること。空にすると全許可(開発専用)。
-    "ALLOWED_ORIGINS": "http://localhost:3000,https://YOUR-APP.vercel.app"
+    "ALLOWED_ORIGINS": "http://localhost:3000,https://bluesortieonline.vercel.app"
   },
 
   "observability": { "enabled": true }

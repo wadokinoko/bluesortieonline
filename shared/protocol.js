@@ -17,6 +17,7 @@ export const C2S = Object.freeze({
   MATCH_JOIN: 'match.join',  // 進行中の対戦へ(再)参加
   MATCH_LEAVE: 'match.leave',// 対戦から退出(ルームには残る)
   STATE: 'state',            // { s: packState配列 } 自機状態 (約15Hz)
+  FIRE: 'fire',              // { k:'g'|'m', tgt?:pid } 発射の通知(追加)。弾道・命中はサーバーが計算する
   PING: 'ping',              // { ts }
   CHAT: 'chat',              // { text }
 });
@@ -31,6 +32,8 @@ export const S2C = Object.freeze({
   KICK: 'kick',              // { reason }
   CHAT: 'chat',              // { from, name, text }
   MATCH_END: 'match.end',    // { results }
+  HIT: 'hit',                // { to, by, k:'g'|'m', dmg, hp } 命中(追加)。hp はサーバーが確定した残りHP
+  KILL: 'kill',              // { to, by, k } 撃墜(追加)
 });
 
 export const ERR = Object.freeze({

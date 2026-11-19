@@ -9,6 +9,7 @@
 'use strict';
 const $=id=>document.getElementById(id);
 const OH=window.BSOHooks=window.BSOHooks||{}; /*[BSO] 外部(UI/通信)フック。onTick/onFrame/onHud/onLayers*/
+const RT=()=>OH.remoteTargets?OH.remoteTargets():[], RLIVE=t=>!!(t&&t.remote&&OH.remoteAlive&&OH.remoteAlive(t)); /*[BSO:remote-hooks] オンライン相手(ロック・誘導の対象)。対戦外では常に空*/
 if(typeof THREE==='undefined'){
   (window.BSO_fatal||alert)('3Dライブラリを読み込めませんでした。ネットワーク接続を確認して再読み込みしてください。');/*[BSO]*/
   $('go').disabled=true; return;
@@ -507,6 +508,7 @@ function fireMissile(){
   const m=new THREE.Mesh(missGeo,missMat); scene.add(m);
   const target=lock.locked?lock.cand:null;
   missiles.push({m,pos:off.clone(),dir:fwd.clone(),speed:P.speed,target,life:7,puff:0});
+  if(OH.onFire)OH.onFire('m',target); /*[BSO] 発射を通信層へ通知(命中判定はサーバー)*/
   noise(.6,'bandpass',1200,.25,300);
   if(!target)S.msgT=Math.min(S.msgT,0);
 }
@@ -899,6 +901,7 @@ function updatePlayer(dt){
     P.gunT=.07; P.side*=-1;
     const o=new V3(P.side*2.6,-.4,-4).applyQuaternion(P.q).add(P.pos);
     addBullet(o,fwd.clone().multiplyScalar(P.speed+1000),'p',1.5); noise(.05,'highpass',1800,.07);
+    if(OH.onFire)OH.onFire('g'); /*[BSO]*/
   }
 }
 
@@ -927,8 +930,8 @@ function updateMissiles(dt){
   for(let i=missiles.length-1;i>=0;i--){
     const m=missiles[i]; m.life-=dt;
     m.speed=Math.min(560,m.speed+380*dt);
-    if(m.target&&(enemies.indexOf(m.target)>=0||tg.indexOf(m.target)>=0)){
-      const des=m.target.pos.clone().sub(m.pos).normalize();
+    if(m.target&&(enemies.indexOf(m.target)>=0||tg.indexOf(m.target)>=0||RLIVE(m.target))){ /*[BSO] オンライン相手も追尾*/
+      const des=(m.target.remote?(m.target.aim||m.target.pos):m.target.pos).clone().sub(m.pos).normalize();
       const ang=m.dir.angleTo(des), t=Math.min(1,(2.6*dt)/Math.max(ang,1e-4));
       m.dir.lerp(des,t).normalize();
     }
@@ -941,6 +944,7 @@ function updateMissiles(dt){
     let hit=false;
     for(const e of enemies){ if(m.pos.distanceToSquared(e.pos)<34*34){ e.hp-=250; if(e.hp<=0)killEnemy(e); else explode(e.pos.clone(),.7); hit=true; break; } }
     if(!hit)for(const t of tg){ if(m.pos.distanceToSquared(t.pos)<(t.r+14)*(t.r+14)){ explode(m.pos.clone(),.8); dmgT(t,t.def.sup?260:150); hit=true; break; } }
+    if(!hit)for(const r of RT()){ if(r.aim&&m.pos.distanceToSquared(r.aim)<34*34){ explode(m.pos.clone(),.7); hit=true; break; } } /*[BSO] 見た目の爆発のみ。ダメージはサーバーの hit で確定*/
     if(hit||m.life<=0||m.pos.y<heightAt(m.pos.x,m.pos.z)){
       if(!hit)explode(m.pos.clone(),.5);
       scene.remove(m.m); missiles.splice(i,1);
@@ -949,7 +953,7 @@ function updateMissiles(dt){
 }
 function updateLock(dt){
   let best=null,ba=1e9;
-  for(const e of enemies.concat(tg)){
+  for(const e of enemies.concat(tg,RT())){ /*[BSO] オンライン相手もロック候補*/
     const to=e.pos.clone().sub(P.pos), d=to.length(), ang=fwd.angleTo(to);
     if(d<3600&&ang<.42&&ang<ba){ba=ang;best=e;}
   }
@@ -1117,6 +1121,15 @@ function drawHud(){
     else if(isC){ hx.strokeStyle=C_AMB; hx.beginPath(); hx.arc(p.x,p.y,s+7*U,-Math.PI/2,-Math.PI/2+lock.t*Math.PI*2); hx.stroke(); }
     if(d<7000){ txt(t.def.nm+' '+(d/1000).toFixed(1)+'km',p.x,p.y+s+14*U,11,'center',c); if(t.hp<t.mhp){ hx.fillStyle=c; hx.fillRect(p.x-20*U,p.y+s+19*U,40*U*clamp(t.hp/t.mhp,0,1),3*U); } }
   }
+  /*[BSO:remote-hud]*/
+  for(const r of RT()){
+    const d=r.pos.distanceTo(P.pos), p=proj(r.pos); if(!p.ok)continue;
+    const isC=lock.cand===r, s=Math.max(clamp(24000/d,9,44)*U,isC?22*U:0), c=isC?(lock.locked?C_RED:C_AMB):'#8dff9f';
+    hx.lineWidth=isC?lw*1.6:lw; bracket(p.x,p.y,s,c);
+    if(isC&&lock.locked){ bracket(p.x,p.y,s+7*U,c); txt('LOCK',p.x,p.y-s-12*U,13,'center',C_RED); }
+    else if(isC){ hx.strokeStyle=C_AMB; hx.beginPath(); hx.arc(p.x,p.y,s+7*U,-Math.PI/2,-Math.PI/2+lock.t*Math.PI*2); hx.stroke(); }
+  }
+  /*[/BSO:remote-hud]*/
   /* incoming enemy missiles */
   if(emis.length&&!dead){
     for(const m of emis){
@@ -1427,6 +1440,16 @@ window.BSOCore={
   leaveToMenu(){ toMenu(); },
   toggleGFX,
   getHG:()=>HG,
+  /* オンライン: サーバーが確定した残りHPを自機へ反映(回復はしない)。0以下なら撃墜 */
+  setPlayerHp(hp){
+    if(!P||P.dead||phase!=='play'||S.result)return;
+    hp=Math.max(0,Math.min(100,+hp||0)); if(hp>=P.hp)return;
+    P.hp=hp; S.hitT=.35; noise(.15,'lowpass',900,.3);
+    if(P.hp<=0)crash('撃墜された');
+    else if(P.hp<35&&!S.warnedHp){S.warnedHp=true;radio('デイビッド「1番機、煙を吹いてるぞ!無理するな!」');}
+  },
+  notify(text){ if(S&&phase==='play')radio(String(text),0); },
+  fx(pos,kind){ if(!pos)return; const p=new V3(pos.x,pos.y,pos.z); if(kind==='spark')addPart(p,{col:0xffd080,add:true,s0:10,s1:40,life:.25,op:1}); else explode(p,kind==='big'?2:.7); },
   /* 自機の同期用スナップショット */
   getPlayer(){ if(!P)return null; const q=P.q; return {x:P.pos.x,y:P.pos.y,z:P.pos.z,qx:q.x,qy:q.y,qz:q.z,qw:q.w,speed:P.speed,hp:P.hp,thr:P.thr,dead:!!P.dead,barrier:P.sh>0}; }
 };

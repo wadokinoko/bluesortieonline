@@ -20,7 +20,7 @@ export class RemotePlayers {
       if (p.id === selfId) continue;
       keep.add(p.id);
       const r = this.map.get(p.id);
-      if (r) { r.name = p.name; r.team = p.team; } else this._add(p);
+      if (r) { r.name = p.name; r.tgt.name = p.name; r.team = p.team; } else this._add(p);
     }
     for (const id of [...this.map.keys()]) if (!keep.has(id)) this._remove(id);
   }
@@ -30,7 +30,9 @@ export class RemotePlayers {
     const mesh = this.core.makeJet(c[0], c[1], c[2]);
     mesh.visible = false;
     this.core.scene.add(mesh);
-    this.map.set(p.id, { id: p.id, name: p.name, mesh, buf: [], dead: false });
+    /* ロック・誘導の対象。参照が変わらないよう機体ごとに1つだけ作る。pos=表示位置(補間後) / aim=最新の同期位置(ミサイル誘導用) */
+    const tgt = { remote: true, id: p.id, name: p.name, pos: mesh.position, aim: new this.T.Vector3(), alive: false };
+    this.map.set(p.id, { id: p.id, name: p.name, mesh, buf: [], dead: false, killed: false, hp: 100, tgt });
   }
   _remove(id) {
     const r = this.map.get(id); if (!r) return;
@@ -48,6 +50,7 @@ export class RemotePlayers {
       const s = unpackState(m.players[id]); if (!s) continue;
       r.buf.push({ t: now, s });
       if (r.buf.length > 30) r.buf.shift();
+      r.tgt.aim.set(s.x, s.y, s.z); r.hp = s.hp; // 最新の同期位置と、サーバーが確定したHP
     }
   }
 
@@ -64,11 +67,21 @@ export class RemotePlayers {
       r.mesh.position.set(sa.x + (sc.x - sa.x) * k, sa.y + (sc.y - sa.y) * k, sa.z + (sc.z - sa.z) * k);
       this.qa.set(sa.qx, sa.qy, sa.qz, sa.qw); this.qb.set(sc.qx, sc.qy, sc.qz, sc.qw);
       r.mesh.quaternion.copy(this.qa).slerp(this.qb, k);
-      r.dead = !!(sc.flags & 1);
+      r.dead = !!(sc.flags & 1) || r.killed;
       r.mesh.visible = !r.dead && now - last.t < STALE_MS;
+      r.tgt.alive = r.mesh.visible; // 撃墜・切断(スナップショット途絶)・退出でロック対象から外れる
       const f = r.mesh.userData.flame; if (f) f.scale.z = 0.8 + Math.random() * 0.4;
     }
   }
+
+  /** ロック・誘導の対象(生きていて表示中の相手)。自分自身は roster に入らないので含まれない */
+  targets() { const out = []; for (const r of this.map.values()) if (r.tgt.alive) out.push(r.tgt); return out; }
+  /** 指定のターゲットが今も有効か(退出・撃墜・切断済みなら false) */
+  isLive(t) { const r = t && this.map.get(t.id); return !!r && r.tgt === t && r.tgt.alive; }
+  /** サーバーから撃墜通知を受けた: 次のスナップショットを待たずにロック対象から外す */
+  markKilled(id) { const r = this.map.get(id); if (r) { r.killed = true; r.dead = true; r.tgt.alive = false; r.mesh.visible = false; } }
+  positionOf(id) { const r = this.map.get(id); return r ? r.mesh.position : null; }
+  nameOf(id) { const r = this.map.get(id); return r ? r.name : ''; }
 
   /** onHud から呼ぶ: 機体の上にコールサインと距離を表示 */
   drawLabels(api) {
@@ -78,10 +91,10 @@ export class RemotePlayers {
       const p = proj(r.mesh.position); if (!p.ok) continue;
       const d = r.mesh.position.distanceTo(camera.position);
       const s = Math.max(9, Math.min(34, 20000 / d)) * U;
-      hx.strokeStyle = '#8dff9f'; hx.lineWidth = Math.max(1, 1.4 * U);
-      hx.strokeRect(p.x - s, p.y - s, s * 2, s * 2);
       txt(r.name, p.x, p.y - s - 8 * U, 13, 'center', '#8dff9f');
       txt((d / 1000).toFixed(1) + 'km', p.x, p.y + s + 14 * U, 11, 'center', 'rgba(141,255,159,.7)');
+      const k = Math.max(0, Math.min(1, r.hp / 100));
+      hx.fillStyle = k > 0.35 ? '#8dff9f' : '#ff5a4d'; hx.fillRect(p.x - 20 * U, p.y + s + 19 * U, 40 * U * k, 3 * U);
     }
   }
 }

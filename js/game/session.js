@@ -3,12 +3,13 @@
  *   ・自機状態を SEND_HZ で送信 (NetClient.sendState)
  *   ・snap を RemotePlayers に流し込み、補間表示
  *   ・HUD に ROOM/残り時間/人数を描画
- * 対戦ルール(命中判定・撃墜・スコア)はサーバー権威にする設計で、次フェーズでここへ追加する。 */
+ * 命中判定・撃墜はサーバー権威(server/src/combat.js)。ここは発射の通知(onFire)と、hit/kill の反映だけを行う。 */
 import { CONFIG } from '../config.js';
 import { packState, spawnFor } from '../../shared/rules.js';
 import { RemotePlayers } from './remote-players.js';
 import { saveProfile } from '../profile.js';
 
+const NONE = Object.freeze([]);
 const fmt = (t) => { t = Math.max(0, Math.floor(t)); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
 
 export class Session {
@@ -26,6 +27,12 @@ export class Session {
     OH.onTick = (dt) => this._tick(dt);
     OH.onFrame = () => { if (this.active) this.remote.update(); };
     OH.onHud = (api) => this._hud(api);
+    /* ロックオン・ミサイル誘導・発射通知。対戦中以外は空/無効なのでソロミッションには影響しない */
+    OH.remoteTargets = () => (this.active ? this.remote.targets() : NONE);
+    OH.remoteAlive = (t) => this.active && this.remote.isLive(t);
+    OH.onFire = (k, t) => { if (this.active) this.net.fire(k, t && t.remote ? t.id : undefined); };
+    this.net.on('hit', (m) => this._onHit(m));
+    this.net.on('kill', (m) => this._onKill(m));
     this.net.on('snap', (m) => { if (this.active) this.remote.ingest(m); });
     this.store.subscribe((s, a) => {
       if (a.type === 'match/start') this._begin(s);
@@ -64,6 +71,22 @@ export class Session {
     if (!this.active) return;
     this.active = false; this.remote.clear();
     if (this.core.isPlaying()) this.core.leaveToMenu();
+  }
+
+  /** サーバーが確定した命中。自分なら HP を確定値に合わせ、他人なら着弾エフェクトを出す */
+  _onHit(m) {
+    if (!this.active || !m) return;
+    const me = this.store.get().profile.id;
+    if (m.to === me) return this.core.setPlayerHp(m.hp);
+    const pos = this.remote.positionOf(m.to);
+    if (pos) this.core.fx(pos, m.k === 'm' ? 'boom' : 'spark');
+  }
+  _onKill(m) {
+    if (!this.active || !m) return;
+    const me = this.store.get().profile.id, nm = (id) => (id === me ? 'YOU' : this.remote.nameOf(id) || '?');
+    if (m.to === me) this.core.setPlayerHp(0);
+    else { const pos = this.remote.positionOf(m.to); if (pos) this.core.fx(pos, 'big'); this.remote.markKilled(m.to); }
+    this.core.notify(m.by === me ? '撃墜! ' + nm(m.to) : nm(m.by) + ' が ' + nm(m.to) + ' を撃墜');
   }
 
   _tick(dt) {

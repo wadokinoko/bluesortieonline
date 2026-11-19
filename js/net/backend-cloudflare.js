@@ -1,4 +1,4 @@
-/* Cloudflare Workers + Durable Objects 用バックエンド (次フェーズで Worker 側を実装する)。
+/* Cloudflare Workers + Durable Objects 用バックエンド (Worker/DO 側は server/ に実装済み。docs/DEPLOY.md 参照)。
  *
  * 想定する Worker のルート:
  *   POST {API_BASE}/api/rooms        body: { pid, name, settings } -> 200 { code }
